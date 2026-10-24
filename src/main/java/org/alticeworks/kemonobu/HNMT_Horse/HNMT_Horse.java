@@ -1,6 +1,5 @@
 package org.alticeworks.kemonobu.HNMT_Horse;
 
-import org.bukkit.event.Listener;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.logging.Logger;
@@ -15,6 +14,9 @@ public final class HNMT_Horse extends JavaPlugin {
 
         // 起動時の指定ログ出力
         printStartupBanner();
+
+        // カスタムアイテム & レシピ登録
+        CustomItems.register(this);
 
         // イベントリスナーの登録
         getServer().getPluginManager().registerEvents(new HorseListener(this), this);
@@ -39,7 +41,7 @@ public final class HNMT_Horse extends JavaPlugin {
         log.info("＼　　　＼ ＼　　　＼ ＼　　　＼ 　　＼");
         log.info("HNMT Horse Plugin");
         log.info("   Created by Altice-Works Co.,Ltd.");
-        log.info("      Copyright 2026 日ノ本鯖 All rights reserved. ");
+        ((Logger) log).info("      Copyright 2026 日ノ本鯖 All rights reserved. ");
         log.info("=======================================================");
     }
 }
