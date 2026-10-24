@@ -1,6 +1,8 @@
 package org.alticeworks.kemonobu.HNMT_Horse;
 
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
@@ -14,7 +16,6 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.HorseJumpEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
-import org.bukkit.event.vehicle.VehicleMoveEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -22,6 +23,11 @@ import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.scheduler.BukkitRunnable;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 public class HorseListener implements Listener {
 
@@ -37,6 +43,9 @@ public class HorseListener implements Listener {
     private final NamespacedKey keyStamina;
     private final NamespacedKey keyMaxStamina;
 
+    // プレイヤーごとの直前位置キャッシュ（リアルタイム計測用）
+    private final Map<UUID, Location> lastLocations = new HashMap<>();
+
     public HorseListener(HNMT_Horse plugin) {
         this.plugin = plugin;
         this.keyRunLevel = new NamespacedKey(plugin, "run_level");
@@ -48,6 +57,9 @@ public class HorseListener implements Listener {
 
         this.keyStamina = new NamespacedKey(plugin, "stamina");
         this.keyMaxStamina = new NamespacedKey(plugin, "max_stamina");
+
+        // リアルタイム計測ループを起動（5ティック = 0.25秒ごとに精密チェック）
+        startDistanceTracker();
     }
 
     // ランニング（スピード）専用の必要距離(EXP)計算: 10 + (0.5 * レベル)
@@ -58,6 +70,79 @@ public class HorseListener implements Listener {
     // ジャンプ・体力の必要EXP計算
     private double getRequiredExp(int level) {
         return level * 100.0;
+    }
+
+    // -------------------------------------------------------------
+    // 💡 リアルタイム距離計測＆プログレス表示タスク
+    // -------------------------------------------------------------
+    private void startDistanceTracker() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (player.getVehicle() instanceof Horse horse) {
+                        Location currentLoc = horse.getLocation();
+                        Location lastLoc = lastLocations.get(player.getUniqueId());
+
+                        if (lastLoc != null && lastLoc.getWorld().equals(currentLoc.getWorld())) {
+                            // ワールド同一時の水平・垂直移動距離
+                            double distance = lastLoc.distance(currentLoc);
+
+                            // テレポートや著しいラグ等の誤判定を防止（0.01m〜15m以内の移動をカウント）
+                            if (distance > 0.01 && distance < 15.0) {
+                                processRunning(player, horse, distance);
+                            }
+                        }
+                        lastLocations.put(player.getUniqueId(), currentLoc.clone());
+                    } else {
+                        lastLocations.remove(player.getUniqueId());
+                    }
+                }
+            }
+        }.runTaskTimer(plugin, 5L, 5L); // 5ティック周期で安定稼働
+    }
+
+    // 移動距離の加算・レベルアップ判定・アクションバー表示
+    private void processRunning(Player player, Horse horse, double distance) {
+        PersistentDataContainer pdc = horse.getPersistentDataContainer();
+
+        double stamina = pdc.getOrDefault(keyStamina, PersistentDataType.DOUBLE, 100.0);
+
+        // スタミナ消費
+        if (stamina > 0) {
+            stamina = Math.max(0, stamina - (distance * 0.1));
+            pdc.set(keyStamina, PersistentDataType.DOUBLE, stamina);
+        }
+
+        int runLvl = pdc.getOrDefault(keyRunLevel, PersistentDataType.INTEGER, 1);
+        double runExp = pdc.getOrDefault(keyRunExp, PersistentDataType.DOUBLE, 0.0) + distance;
+        double reqExp = getRequiredRunExp(runLvl);
+
+        // レベルアップ条件判定 (10 + 0.5 * Level)
+        while (runExp >= reqExp) {
+            runExp -= reqExp;
+            runLvl++;
+            reqExp = getRequiredRunExp(runLvl);
+
+            double maxStamina = pdc.getOrDefault(keyMaxStamina, PersistentDataType.DOUBLE, 100.0) + 15.0;
+            pdc.set(keyMaxStamina, PersistentDataType.DOUBLE, maxStamina);
+
+            AttributeInstance speedAttr = horse.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED);
+            if (speedAttr != null) {
+                speedAttr.setBaseValue(speedAttr.getBaseValue() + 0.005);
+            }
+
+            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.2f);
+            player.sendMessage(ChatColor.GOLD + "🐴 【レベルアップ】 馬のランニングレベルが " + runLvl + " に上がりました！ (速度・最大スタミナUP)");
+        }
+
+        pdc.set(keyRunLevel, PersistentDataType.INTEGER, runLvl);
+        pdc.set(keyRunExp, PersistentDataType.DOUBLE, runExp);
+
+        // アクションバーでリアルタイムの進行度を表示
+        player.sendActionBar(ChatColor.YELLOW + "🐴 Run Lv." + runLvl + " ["
+                + String.format("%.1f", runExp) + " / " + String.format("%.1f", reqExp) + "m] "
+                + ChatColor.AQUA + "⚡ スタミナ: " + String.format("%.0f", stamina));
     }
 
     @EventHandler
@@ -98,7 +183,7 @@ public class HorseListener implements Listener {
 
         ItemStack handItem = player.getInventory().getItemInMainHand();
 
-        // 1. ホースカンズメをスニーク右クリックで与える処理
+        // ホースカンズメ処理
         if (player.isSneaking() && isCustomItem(handItem, CustomItems.keyHorseCanned)) {
             event.setCancelled(true);
 
@@ -112,7 +197,7 @@ public class HorseListener implements Listener {
             return;
         }
 
-        // 2. スニーク右クリックでステータス表示
+        // スニーク右クリックで詳細ステータス表示
         if (player.isSneaking()) {
             event.setCancelled(true);
 
@@ -179,51 +264,6 @@ public class HorseListener implements Listener {
             player.playSound(horse.getLocation(), Sound.ENTITY_PLAYER_ATTACK_WEAK, 1.0f, 1.2f);
             player.sendActionBar(ChatColor.YELLOW + "⚡ 鞭を使用！ (スタミナ-10, HP-0.5) 速度アップ時間が延長されました！");
         }
-    }
-
-    // 走行距離に応じたランニングレベルアップ判定
-    @EventHandler
-    public void onVehicleMove(VehicleMoveEvent event) {
-        if (!(event.getVehicle() instanceof Horse horse)) return;
-        if (horse.getPassengers().isEmpty() || !(horse.getPassengers().get(0) instanceof Player player)) return;
-
-        double distance = event.getFrom().distance(event.getTo());
-        if (distance <= 0.05 || distance > 10.0) return;
-
-        PersistentDataContainer pdc = horse.getPersistentDataContainer();
-        double stamina = pdc.getOrDefault(keyStamina, PersistentDataType.DOUBLE, 100.0);
-
-        // スタミナ消費
-        if (stamina > 0) {
-            stamina = Math.max(0, stamina - (distance * 0.2));
-            pdc.set(keyStamina, PersistentDataType.DOUBLE, stamina);
-        }
-
-        // 走行距離をそのままEXP（メートル/ブロック単位）として蓄積
-        int runLvl = pdc.getOrDefault(keyRunLevel, PersistentDataType.INTEGER, 1);
-        double runExp = pdc.getOrDefault(keyRunExp, PersistentDataType.DOUBLE, 0.0) + distance;
-        double reqExp = getRequiredRunExp(runLvl);
-
-        // 新しい計算式 [10 + (0.5 * レベル)] を満たしたらレベルアップ
-        while (runExp >= reqExp) {
-            runExp -= reqExp;
-            runLvl++;
-            reqExp = getRequiredRunExp(runLvl);
-
-            double maxStamina = pdc.getOrDefault(keyMaxStamina, PersistentDataType.DOUBLE, 100.0) + 15.0;
-            pdc.set(keyMaxStamina, PersistentDataType.DOUBLE, maxStamina);
-
-            AttributeInstance speedAttr = horse.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED);
-            if (speedAttr != null) {
-                speedAttr.setBaseValue(speedAttr.getBaseValue() + 0.005);
-            }
-
-            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.2f);
-            player.sendMessage(ChatColor.GOLD + "🐴 【レベルアップ】 馬のランニングレベルが " + runLvl + " に上がりました！ (速度・最大スタミナUP)");
-        }
-
-        pdc.set(keyRunLevel, PersistentDataType.INTEGER, runLvl);
-        pdc.set(keyRunExp, PersistentDataType.DOUBLE, runExp);
     }
 
     // ジャンプEXP獲得
