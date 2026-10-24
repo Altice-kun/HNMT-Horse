@@ -58,13 +58,13 @@ public class HorseListener implements Listener {
         this.keyStamina = new NamespacedKey(plugin, "stamina");
         this.keyMaxStamina = new NamespacedKey(plugin, "max_stamina");
 
-        // リアルタイム計測ループを起動（5ティック = 0.25秒ごとに精密チェック）
+        // リアルタイム計測ループを起動（5ティック = 0.25秒ごとにチェック）
         startDistanceTracker();
     }
 
-    // ランニング（スピード）専用の必要距離(EXP)計算: 10 + (0.5 * レベル)
+    // ランニング（スピード）専用の必要距離(EXP)計算: 10 + (25 * レベル)
     private double getRequiredRunExp(int level) {
-        return 10.0 + (0.5 * level);
+        return 10.0 + (25.0 * level);
     }
 
     // ジャンプ・体力の必要EXP計算
@@ -73,7 +73,7 @@ public class HorseListener implements Listener {
     }
 
     // -------------------------------------------------------------
-    // 💡 リアルタイム距離計測＆プログレス表示タスク
+    // リアルタイム距離計測＆プログレス表示タスク
     // -------------------------------------------------------------
     private void startDistanceTracker() {
         new BukkitRunnable() {
@@ -85,7 +85,6 @@ public class HorseListener implements Listener {
                         Location lastLoc = lastLocations.get(player.getUniqueId());
 
                         if (lastLoc != null && lastLoc.getWorld().equals(currentLoc.getWorld())) {
-                            // ワールド同一時の水平・垂直移動距離
                             double distance = lastLoc.distance(currentLoc);
 
                             // テレポートや著しいラグ等の誤判定を防止（0.01m〜15m以内の移動をカウント）
@@ -99,7 +98,7 @@ public class HorseListener implements Listener {
                     }
                 }
             }
-        }.runTaskTimer(plugin, 5L, 5L); // 5ティック周期で安定稼働
+        }.runTaskTimer(plugin, 5L, 5L);
     }
 
     // 移動距離の加算・レベルアップ判定・アクションバー表示
@@ -118,7 +117,7 @@ public class HorseListener implements Listener {
         double runExp = pdc.getOrDefault(keyRunExp, PersistentDataType.DOUBLE, 0.0) + distance;
         double reqExp = getRequiredRunExp(runLvl);
 
-        // レベルアップ条件判定 (10 + 0.5 * Level)
+        // レベルアップ条件判定 (10 + 25 * Level)
         while (runExp >= reqExp) {
             runExp -= reqExp;
             runLvl++;
