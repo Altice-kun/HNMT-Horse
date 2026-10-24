@@ -1,12 +1,10 @@
 package org.alticeworks.kemonobu.HNMT_Horse;
 
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.entity.AbstractHorse;
 import org.bukkit.entity.Horse;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -24,7 +22,6 @@ import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.jetbrains.annotations.NotNull;
 
 public class HorseListener implements Listener {
 
@@ -53,7 +50,12 @@ public class HorseListener implements Listener {
         this.keyMaxStamina = new NamespacedKey(plugin, "max_stamina");
     }
 
-    // 必要EXPの計算 (レベル x 100)
+    // ランニング（スピード）専用の必要距離(EXP)計算: 10 + (0.5 * レベル)
+    private double getRequiredRunExp(int level) {
+        return 10.0 + (0.5 * level);
+    }
+
+    // ジャンプ・体力の必要EXP計算
     private double getRequiredExp(int level) {
         return level * 100.0;
     }
@@ -80,7 +82,7 @@ public class HorseListener implements Listener {
 
             AttributeInstance speedAttr = horse.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED);
             if (speedAttr != null) {
-                double randomSpeed = 0.15 + (Math.random() * 0.05); // 初期速度
+                double randomSpeed = 0.15 + (Math.random() * 0.05);
                 speedAttr.setBaseValue(randomSpeed);
             }
         }
@@ -137,7 +139,7 @@ public class HorseListener implements Listener {
             player.sendMessage(ChatColor.GOLD + "========================================");
             player.sendMessage(ChatColor.YELLOW + " 🐴 【 馬のステータス情報 】");
             player.sendMessage(ChatColor.GOLD + "----------------------------------------");
-            player.sendMessage(ChatColor.GREEN + " • ランニングLV : " + ChatColor.WHITE + runLvl + ChatColor.GRAY + " (EXP: " + String.format("%.1f", runExp) + "/" + getRequiredExp(runLvl) + " | 速度: " + String.format("%.3f", speed) + ")");
+            player.sendMessage(ChatColor.GREEN + " • ランニングLV : " + ChatColor.WHITE + runLvl + ChatColor.GRAY + " (走破: " + String.format("%.1f", runExp) + "/" + String.format("%.1f", getRequiredRunExp(runLvl)) + "m | 速度: " + String.format("%.3f", speed) + ")");
             player.sendMessage(ChatColor.GREEN + " • ジャンプLV     : " + ChatColor.WHITE + jumpLvl + ChatColor.GRAY + " (EXP: " + String.format("%.1f", jumpExp) + "/" + getRequiredExp(jumpLvl) + " | 跳躍力: " + String.format("%.2f", horse.getJumpStrength()) + ")");
             player.sendMessage(ChatColor.GREEN + " • 体力LV         : " + ChatColor.WHITE + healthLvl + ChatColor.GRAY + " (EXP: " + String.format("%.1f", healthExp) + "/" + getRequiredExp(healthLvl) + " | HP: " + String.format("%.1f", curHp) + "/" + String.format("%.1f", maxHp) + ")");
             player.sendMessage(ChatColor.AQUA  + " • スタミナ       : " + ChatColor.WHITE + String.format("%.1f", stamina) + " / " + String.format("%.1f", maxStamina));
@@ -145,7 +147,7 @@ public class HorseListener implements Listener {
         }
     }
 
-    // 鞭の使用処理（手持ちで右クリック）
+    // 鞭の使用処理
     @EventHandler
     public void onPlayerInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
@@ -160,81 +162,79 @@ public class HorseListener implements Listener {
             double stamina = pdc.getOrDefault(keyStamina, PersistentDataType.DOUBLE, 100.0);
             double curHealth = horse.getHealth();
 
-            // 発動条件チェック: スタミナ10以上、体力0.5超過
             if (stamina < 10.0 || curHealth <= 0.5) {
                 player.sendMessage(ChatColor.RED + "馬のスタミナまたは体力が足りず、鞭を使用できません！");
                 return;
             }
 
-            // 消費処理
             pdc.set(keyStamina, PersistentDataType.DOUBLE, stamina - 10.0);
             horse.setHealth(curHealth - 0.5);
 
-            // 効果付与（スピード上昇効果を重ねがけ可能にするため持続時間を加算）
             int currentDuration = 0;
             if (horse.hasPotionEffect(PotionEffectType.SPEED)) {
                 currentDuration = horse.getPotionEffect(PotionEffectType.SPEED).getDuration();
             }
-            // 5秒（100 ticks）追加
             horse.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, currentDuration + 100, 1, false, true));
 
-            player.playSound(horse.getLocation(), Sound.ENTITY_PLAYER_ATTACK_WEAK , 1.0f, 1.2f);
+            player.playSound(horse.getLocation(), Sound.ENTITY_PLAYER_ATTACK_WEAK, 1.0f, 1.2f);
+            player.sendActionBar(ChatColor.YELLOW + "⚡ 鞭を使用！ (スタミナ-10, HP-0.5) 速度アップ時間が延長されました！");
         }
     }
 
-    // 走行・距離計算によるランニングEXP獲得 & レベルアップ
+    // 走行距離に応じたランニングレベルアップ判定
     @EventHandler
     public void onVehicleMove(VehicleMoveEvent event) {
         if (!(event.getVehicle() instanceof Horse horse)) return;
         if (horse.getPassengers().isEmpty() || !(horse.getPassengers().get(0) instanceof Player player)) return;
 
         double distance = event.getFrom().distance(event.getTo());
-        if (distance <= 0.05 || distance > 10.0) return; // 止まっているかTP等の移動を除外
+        if (distance <= 0.05 || distance > 10.0) return;
 
         PersistentDataContainer pdc = horse.getPersistentDataContainer();
         double stamina = pdc.getOrDefault(keyStamina, PersistentDataType.DOUBLE, 100.0);
 
-        // スタミナ消費 (1ブロックごとに0.2消費)
+        // スタミナ消費
         if (stamina > 0) {
             stamina = Math.max(0, stamina - (distance * 0.2));
             pdc.set(keyStamina, PersistentDataType.DOUBLE, stamina);
         }
 
-        // EXP加算（走った距離に応じてEXP獲得）
+        // 走行距離をそのままEXP（メートル/ブロック単位）として蓄積
         int runLvl = pdc.getOrDefault(keyRunLevel, PersistentDataType.INTEGER, 1);
         double runExp = pdc.getOrDefault(keyRunExp, PersistentDataType.DOUBLE, 0.0) + distance;
-        double reqExp = getRequiredExp(runLvl);
+        double reqExp = getRequiredRunExp(runLvl);
 
-        if (runExp >= reqExp) {
+        // 新しい計算式 [10 + (0.5 * レベル)] を満たしたらレベルアップ
+        while (runExp >= reqExp) {
             runExp -= reqExp;
             runLvl++;
+            reqExp = getRequiredRunExp(runLvl);
 
-            pdc.set(keyRunLevel, PersistentDataType.INTEGER, runLvl);
             double maxStamina = pdc.getOrDefault(keyMaxStamina, PersistentDataType.DOUBLE, 100.0) + 15.0;
             pdc.set(keyMaxStamina, PersistentDataType.DOUBLE, maxStamina);
 
-            // 移動速度の上昇
             AttributeInstance speedAttr = horse.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED);
             if (speedAttr != null) {
-                speedAttr.setBaseValue(speedAttr.getBaseValue() + 0.008);
+                speedAttr.setBaseValue(speedAttr.getBaseValue() + 0.005);
             }
 
             player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.2f);
-            player.sendMessage(ChatColor.GOLD + "🐴 【レベルアップ】 馬のランニングレベルが " + runLvl + " になりました！ (移動速度・最大スタミナUP)");
+            player.sendMessage(ChatColor.GOLD + "🐴 【レベルアップ】 馬のランニングレベルが " + runLvl + " に上がりました！ (速度・最大スタミナUP)");
         }
 
+        pdc.set(keyRunLevel, PersistentDataType.INTEGER, runLvl);
         pdc.set(keyRunExp, PersistentDataType.DOUBLE, runExp);
     }
 
     // ジャンプEXP獲得
     @EventHandler
     public void onHorseJump(HorseJumpEvent event) {
-        @NotNull AbstractHorse horse = event.getEntity();
+        Horse horse = (Horse) event.getEntity();
         if (horse.getPassengers().isEmpty() || !(horse.getPassengers().get(0) instanceof Player player)) return;
 
         PersistentDataContainer pdc = horse.getPersistentDataContainer();
         int jumpLvl = pdc.getOrDefault(keyJumpLevel, PersistentDataType.INTEGER, 1);
-        double jumpExp = pdc.getOrDefault(keyJumpExp, PersistentDataType.DOUBLE, 0.0) + 15.0; // 1回につき15EXP
+        double jumpExp = pdc.getOrDefault(keyJumpExp, PersistentDataType.DOUBLE, 0.0) + 15.0;
         double reqExp = getRequiredExp(jumpLvl);
 
         if (jumpExp >= reqExp) {
@@ -287,7 +287,6 @@ public class HorseListener implements Listener {
         pdc.set(keyHealthExp, PersistentDataType.DOUBLE, healthExp);
     }
 
-    // カスタムアイテム識別用ヘルパー
     private boolean isCustomItem(ItemStack item, NamespacedKey key) {
         if (item == null || !item.hasItemMeta()) return false;
         ItemMeta meta = item.getItemMeta();
