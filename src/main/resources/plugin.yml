@@ -1,0 +1,7 @@
+name: HNMT_Horse
+version: '0.1'
+main: org.alticeworks.kemonobu.HNMT_Horse.HNMT_Horse
+api-version: '1.21'
+description: HNMT Horse Plugin with custom stats, levels, and stamina.
+authors:
+  - Altice-Works Co.,Ltd.
